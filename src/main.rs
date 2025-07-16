@@ -1,6 +1,3 @@
-// TODO: add colors
-// TODO: add unlink command
-
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -8,8 +5,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::exit;
 
-use colored::Colorize;
 use clap::{Parser, Subcommand};
+use colored::Colorize;
+use glob::glob;
 use path_clean::PathClean;
 use serde::Deserialize;
 use serde::Serialize;
@@ -20,15 +18,12 @@ const CFG_FILE: &str = "Link.toml";
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
     let cfg_path = get_cfg_path(&cli)?;
-    let mut cfg = load_cfg(&cfg_path)?;
+    let cfg = load_cfg(&cfg_path)?;
 
     match cli.commands {
         Commands::Link { entry } => link(&cfg, &entry)?,
-        Commands::Add { target, root } => add(&mut cfg, &cfg_path, target, root)?,
         Commands::Validate => validate(&cfg)?,
-
-        _ => panic!(),
-        // Command::LinkAll => link_all(&cfg)?,
+        Commands::Add { targets, root } => add(cfg_path, cfg, targets, root)?,
     }
 
     Ok(())
@@ -47,19 +42,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Link a single entry
+    /// Link entries
     Link {
         /// The directory or file entry to link
         entry: String,
     },
 
-    /// Link everything
-    LinkAll,
-
     /// Add the specified file or directory to dotfiles_root
     Add {
-        target: PathBuf,
+        targets: Vec<PathBuf>,
         /// Use a custom root, uses DOTLINK_ROOT env variable if not specified
+        #[clap(long)]
         root: Option<PathBuf>,
     },
 
@@ -195,7 +188,7 @@ fn load_cfg(cfg_path: &Path) -> Result<Config, io::Error> {
     Ok(cfg)
 }
 
-fn add(
+fn add_one(
     cfg: &mut Config,
     cfg_path: &PathBuf,
     target: PathBuf,
@@ -223,7 +216,7 @@ fn add(
     };
 
     if !fs::exists(&target)? {
-        eprintln!("Target: {target:?} does not exists"); 
+        eprintln!("Target: {target:?} does not exists");
     }
 
     let target = target.canonicalize()?.clean();
@@ -277,7 +270,10 @@ fn validate(cfg: &Config) -> io::Result<()> {
 
         // Check target
         if !target_path.exists() {
-            println!("{}", format!("󰜺 Missing target: {target:?} — will be created").blue());
+            println!(
+                "{}",
+                format!("󰜺 Missing target: {target:?} — will be created").blue()
+            );
         } else {
             let meta = fs::symlink_metadata(&target_path)?;
             if meta.file_type().is_symlink() {
@@ -288,12 +284,13 @@ fn validate(cfg: &Config) -> io::Result<()> {
                     );
                     all_ok = false;
                 } else {
-                    println!("{}", format!("󰄬 {name:?} -> {target:?} [ok]").white().bold());
+                    println!(
+                        "{}",
+                        format!("󰄬 {name:?} -> {target:?} [ok]").white().bold()
+                    );
                 }
             } else {
-                eprintln!(
-                    "✖ Conflict: {target:?} exists and is not a symlink"
-                );
+                eprintln!("✖ Conflict: {target:?} exists and is not a symlink");
                 all_ok = false;
             }
         }
@@ -306,4 +303,34 @@ fn validate(cfg: &Config) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_targets(pattern: &str) -> io::Result<Vec<PathBuf>> {
+    Ok(glob(pattern)
+        .expect("Fsiled to read glob pattern")
+        .filter_map(|i| {
+            i.inspect_err(|e| eprintln!("{} {}", "Glob error:".red(), e.to_string().red()))
+                .ok()
+        })
+        .collect::<Vec<_>>())
+}
+
+fn add(
+    cfg_path: PathBuf,
+    mut cfg: Config,
+    targets: Vec<PathBuf>,
+    root: Option<PathBuf>,
+) -> io::Result<()> {
+    Ok(for pattern in targets {
+        for path in resolve_targets(pattern.to_str().unwrap())? {
+            println!(
+                "[{}] {} {}",
+                "INFO".yellow(),
+                "adding".yellow(),
+                format!("{path:?}").yellow()
+            );
+
+            add_one(&mut cfg, &cfg_path, path, root.clone())?;
+        }
+    })
 }
