@@ -201,57 +201,6 @@ fn add_one(
     )
 }
 
-fn validate(cfg: &Config) -> io::Result<()> {
-    let mut all_ok = true;
-
-    for (name, source, target) in cfg.entries()? {
-        let target_path = expand_tilde(&target);
-        let target_path = PathBuf::from(target_path);
-
-        // Check source
-        if !source.exists() {
-            eprintln!("✖ Source missing: {source:?}");
-            all_ok = false;
-            continue;
-        }
-
-        // Check target
-        if !target_path.exists() {
-            println!(
-                "{}",
-                format!("󰜺 Missing target: {target:?} — will be created").blue()
-            );
-        } else {
-            let meta = fs::symlink_metadata(&target_path)?;
-            if meta.file_type().is_symlink() {
-                let actual = fs::read_link(&target_path)?;
-                if actual != source {
-                    eprintln!(
-                        "⚠ Symlink mismatch: {target:?} points to {actual:?}, expected {source:?}"
-                    );
-                    all_ok = false;
-                } else {
-                    println!(
-                        "{}",
-                        format!("󰄬 {name:?} -> {target:?} [ok]").white().bold()
-                    );
-                }
-            } else {
-                eprintln!("✖ Conflict: {target:?} exists and is not a symlink");
-                all_ok = false;
-            }
-        }
-    }
-
-    if all_ok {
-        println!("✅ All entries validated successfully");
-    } else {
-        println!("❌ Some issues were found.");
-    }
-
-    Ok(())
-}
-
 fn resolve_targets(pattern: &str) -> io::Result<Vec<PathBuf>> {
     Ok(glob(pattern)
         .expect("Failed to read glob pattern")
